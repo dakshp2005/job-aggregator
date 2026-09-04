@@ -1,0 +1,43 @@
+name: Fetch one company (on-demand)
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "fetch_requests row id to process"
+        required: false
+      query:
+        description: "Company name to resolve + ingest (if no request_id)"
+        required: false
+      slug:
+        description: "Existing company slug to re-ingest"
+        required: false
+
+concurrency:
+  group: ingest-one-${{ github.event.inputs.request_id || github.event.inputs.query || github.event.inputs.slug }}
+  cancel-in-progress: false
+
+jobs:
+  fetch-one:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Process
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          AI_DAILY_CALL_BUDGET: ${{ vars.AI_DAILY_CALL_BUDGET || '800' }}
+          SCRAPER_CONTACT_URL: ${{ vars.SCRAPER_CONTACT_URL }}
+        run: >
+          npx tsx scripts/ingest-one.ts
+          ${{ github.event.inputs.request_id && format('--request-id={0}', github.event.inputs.request_id) || '' }}
+          ${{ github.event.inputs.query && format('--query={0}', github.event.inputs.query) || '' }}
+          ${{ github.event.inputs.slug && format('--slug={0}', github.event.inputs.slug) || '' }}

@@ -1,0 +1,45 @@
+name: Ingest jobs
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub's minimum for public repos is 5 minutes.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      stale_hours:
+        description: "Only re-scrape companies older than N hours (0 = all)"
+        default: "0"
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Ingest shard ${{ matrix.shard }}
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          AI_DAILY_CALL_BUDGET: ${{ vars.AI_DAILY_CALL_BUDGET || '800' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NEXT_PUBLIC_SITE_URL: ${{ vars.SITE_URL }}
+          SCRAPER_CONTACT_URL: ${{ vars.SCRAPER_CONTACT_URL }}
+        run: >
+          npx tsx scripts/ingest-all.ts
+          --shard=${{ matrix.shard }} --of=4
+          --stale=${{ github.event.inputs.stale_hours || '0' }}
