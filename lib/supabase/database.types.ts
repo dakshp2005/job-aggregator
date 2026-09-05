@@ -54,6 +54,7 @@ export type CompanyRow = {
   description: string | null;
   last_scraped_at: string | null;
   last_scrape_status: RunStatus | null;
+  ai_extract_attempted_at: string | null;
   open_jobs_count: number;
   created_at: string;
   updated_at: string;

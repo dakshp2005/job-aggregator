@@ -28,6 +28,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - name: Process
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -36,6 +37,7 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
           AI_DAILY_CALL_BUDGET: ${{ vars.AI_DAILY_CALL_BUDGET || '800' }}
           SCRAPER_CONTACT_URL: ${{ vars.SCRAPER_CONTACT_URL }}
+          ENABLE_BROWSER_RENDER: "true"
         run: >
           npx tsx scripts/ingest-one.ts
           ${{ github.event.inputs.request_id && format('--request-id={0}', github.event.inputs.request_id) || '' }}

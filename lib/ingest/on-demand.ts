@@ -1,10 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, CompanyRow, FetchStatus } from "@/lib/supabase/database.types";
 import { resolveCompany } from "@/lib/ai/resolve-company";
-import { extractJobsWithAi } from "@/lib/ai/extract-jobs";
 import { ingestCompany } from "./run";
-import { applyDiff } from "./diff";
-import { normalizeJob, isEarlyCareerFriendly } from "./normalize";
 import { slugify } from "@/lib/utils";
 
 type Admin = SupabaseClient<Database>;
@@ -65,9 +62,13 @@ async function applyResolved(
   r: Awaited<ReturnType<typeof resolveCompany>>,
 ): Promise<CompanyRow> {
   // Only fill gaps — never clobber good data with a lower-confidence guess.
+  // Exception: a company stuck in "error" never actually produced a job with
+  // its current data, so it's safe (and necessary) to let a fresh resolution
+  // fully replace it instead of only filling in blanks.
+  const brokenExisting = existing.status === "error";
   const patch: Partial<CompanyRow> = {};
-  if (!existing.careers_url && r.careersUrl) patch.careers_url = r.careersUrl;
-  if (existing.ats_type === "unknown" && r.atsType !== "unknown") {
+  if ((!existing.careers_url || brokenExisting) && r.careersUrl) patch.careers_url = r.careersUrl;
+  if ((existing.ats_type === "unknown" || brokenExisting) && r.atsType !== "unknown") {
     patch.ats_type = r.atsType;
     patch.ats_slug = r.atsSlug;
   }
@@ -132,43 +133,16 @@ export async function processFetchRequest(
       { resolved_company_id: company.id },
     );
 
-    const outcome = await ingestCompany(admin, company);
-    let jobCount = outcome.diff?.found ?? 0;
-
-    // Nothing structured found — try AI extraction from the careers page.
-    if (jobCount === 0 && company.careers_url) {
-      await setStatus(admin, requestId, "extracting", "No structured feed — extracting with AI…", {
-        resolved_company_id: company.id,
-      });
-      try {
-        const aiJobs = await extractJobsWithAi(admin, company.careers_url);
-        if (aiJobs.length) {
-          const normalized = aiJobs.map((j) => normalizeJob(j, "ai"));
-          const diff = await applyDiff(admin, company.id, normalized);
-          jobCount = diff.found;
-          await admin
-            .from("companies")
-            .update({
-              is_early_career_friendly: isEarlyCareerFriendly(normalized),
-              status: "limited",
-              last_scraped_at: new Date().toISOString(),
-              last_scrape_status: "partial",
-            })
-            .eq("id", company.id);
-          await admin.from("scrape_runs").insert({
-            company_id: company.id,
-            adapter: "ai-extract",
-            status: "partial",
-            jobs_found: diff.found,
-            jobs_added: diff.added,
-            jobs_closed: diff.closed,
-            finished_at: new Date().toISOString(),
-          });
-        }
-      } catch {
-        // AI budget exhausted or extraction failed — keep the company, no jobs yet.
-      }
-    }
+    // ingestCompany() runs the full ATS → JSON-LD → AI-extraction fallback
+    // chain itself, so a brand-new company gets the same best-effort scrape
+    // the recurring cron would give it.
+    const outcome = await ingestCompany(admin, company, {
+      onStatus: (label) =>
+        setStatus(admin, requestId, label, "No structured feed — extracting with AI…", {
+          resolved_company_id: company.id,
+        }),
+    });
+    const jobCount = outcome.diff?.found ?? 0;
 
     await setStatus(
       admin,

@@ -29,6 +29,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - name: Ingest shard ${{ matrix.shard }}
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -39,6 +40,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           NEXT_PUBLIC_SITE_URL: ${{ vars.SITE_URL }}
           SCRAPER_CONTACT_URL: ${{ vars.SCRAPER_CONTACT_URL }}
+          ENABLE_BROWSER_RENDER: "true"
         run: >
           npx tsx scripts/ingest-all.ts
           --shard=${{ matrix.shard }} --of=4

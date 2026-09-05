@@ -3,13 +3,23 @@ import type { Database, CompanyRow, RunStatus } from "@/lib/supabase/database.ty
 import { getAdapter, ADAPTERS } from "@/lib/adapters/registry";
 import { DEFAULT_CONTEXT } from "@/lib/adapters/http";
 import { jsonLdAdapter } from "@/lib/adapters/jsonld";
+import { extractJobsWithAi } from "@/lib/ai/extract-jobs";
 import { normalizeJob, isEarlyCareerFriendly } from "./normalize";
 import { applyDiff, type DiffResult } from "./diff";
+
+const AI_EXTRACT_THROTTLE_HOURS = Number(process.env.AI_EXTRACT_THROTTLE_HOURS ?? 24);
 
 type Admin = SupabaseClient<Database>;
 type IngestCompany = Pick<
   CompanyRow,
-  "id" | "name" | "slug" | "ats_type" | "ats_slug" | "careers_url" | "tags"
+  | "id"
+  | "name"
+  | "slug"
+  | "ats_type"
+  | "ats_slug"
+  | "careers_url"
+  | "tags"
+  | "ai_extract_attempted_at"
 >;
 
 export interface IngestOutcome {
@@ -24,12 +34,12 @@ export interface IngestOutcome {
 export async function ingestCompany(
   admin: Admin,
   company: IngestCompany,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; onStatus?: (label: "extracting") => void | Promise<void> } = {},
 ): Promise<IngestOutcome> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
 
-  let adapterLabel = company.ats_type;
+  let adapterLabel: string = company.ats_type;
   let slug = company.ats_slug ?? "";
   let adapter = getAdapter(company.ats_type);
 
@@ -64,7 +74,7 @@ export async function ingestCompany(
       .update({
         last_scraped_at: new Date().toISOString(),
         last_scrape_status: status,
-        status: status === "error" ? "error" : "active",
+        status: status === "error" ? "error" : adapterLabel === "ai-extract" ? "limited" : "active",
       })
       .eq("id", company.id);
     return {
@@ -82,8 +92,37 @@ export async function ingestCompany(
   }
 
   try {
-    const raw = await adapter.fetchJobs(slug, ctx);
-    const normalized = raw.map((r) => normalizeJob(r, adapter!.type === "jsonld" ? "jsonld" : "ats"));
+    let raw = await adapter.fetchJobs(slug, ctx);
+    let source = adapter.type === "jsonld" ? "jsonld" : "ats";
+
+    // Nothing structured found — try AI extraction of the careers page, but
+    // throttle retries per company so a persistently-empty page doesn't burn
+    // the shared Gemini daily budget on every 30-minute cron pass.
+    if (raw.length === 0 && company.careers_url) {
+      const lastAttempt = company.ai_extract_attempted_at
+        ? new Date(company.ai_extract_attempted_at).getTime()
+        : 0;
+      const throttleMs = AI_EXTRACT_THROTTLE_HOURS * 3600_000;
+      if (Date.now() - lastAttempt >= throttleMs) {
+        await admin
+          .from("companies")
+          .update({ ai_extract_attempted_at: new Date().toISOString() })
+          .eq("id", company.id);
+        await opts.onStatus?.("extracting");
+        try {
+          const aiJobs = await extractJobsWithAi(admin, company.careers_url);
+          if (aiJobs.length) {
+            raw = aiJobs;
+            source = "ai";
+            adapterLabel = "ai-extract";
+          }
+        } catch {
+          // No Gemini key, budget exhausted, or extraction failed — stay at 0 jobs.
+        }
+      }
+    }
+
+    const normalized = raw.map((r) => normalizeJob(r, source));
     const diff = await applyDiff(admin, company.id, normalized);
 
     const friendly = isEarlyCareerFriendly(normalized);

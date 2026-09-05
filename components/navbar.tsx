@@ -32,7 +32,7 @@ export async function Navbar() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <SearchCommand />
+          <SearchCommand signedIn={!!user} />
           <ThemeToggle />
           <UserMenu email={user?.email ?? null} />
         </div>

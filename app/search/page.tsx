@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { CompanyCard } from "@/components/company-card";
@@ -15,6 +16,11 @@ export default async function SearchPage({
   const query = q.trim();
 
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect(`/login?next=${encodeURIComponent(`/search?q=${query}`)}`);
+
   const { data: hits } = query
     ? await supabase.rpc("search_companies", { q: query, lim: 24 })
     : { data: [] };

@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
 
   const { data: companies } = await admin
     .from("companies")
-    .select("id, name, slug, ats_type, ats_slug, careers_url, tags")
+    .select("id, name, slug, ats_type, ats_slug, careers_url, tags, ai_extract_attempted_at")
     .neq("status", "error")
     .order("last_scraped_at", { ascending: true, nullsFirst: true })
     .limit(limit);

@@ -25,9 +25,11 @@ interface Hit {
 export function SearchCommand({
   variant = "button",
   className,
+  signedIn = true,
 }: {
   variant?: "button" | "hero";
   className?: string;
+  signedIn?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
@@ -41,12 +43,16 @@ export function SearchCommand({
       if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || e.key === "/") {
         if (e.key === "/" && /input|textarea/i.test((e.target as HTMLElement)?.tagName)) return;
         e.preventDefault();
+        if (!signedIn) {
+          router.push("/login?next=/search");
+          return;
+        }
         setOpen((o) => !o);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [signedIn, router]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -75,18 +81,28 @@ export function SearchCommand({
     router.push(path);
   };
 
+  const openOrSignIn = () => {
+    if (!signedIn) {
+      router.push("/login?next=/search");
+      return;
+    }
+    setOpen(true);
+  };
+
   return (
     <>
       {variant === "hero" ? (
         <button
-          onClick={() => setOpen(true)}
+          onClick={openOrSignIn}
           className={cn(
             "flex w-full items-center gap-3 rounded-xl border bg-background px-5 py-4 text-left text-muted-foreground shadow-sm transition hover:border-primary/40 hover:shadow",
             className,
           )}
         >
           <Search className="h-5 w-5" />
-          <span className="flex-1 text-base">Search any company…</span>
+          <span className="flex-1 text-base">
+            {signedIn ? "Search any company…" : "Sign in to search…"}
+          </span>
           <kbd className="hidden rounded border bg-muted px-1.5 py-0.5 text-xs sm:inline">
             ⌘K
           </kbd>
@@ -94,11 +110,13 @@ export function SearchCommand({
       ) : (
         <Button
           variant="outline"
-          onClick={() => setOpen(true)}
+          onClick={openOrSignIn}
           className={cn("gap-2 text-muted-foreground", className)}
         >
           <Search className="h-4 w-4" />
-          <span className="hidden sm:inline">Search companies</span>
+          <span className="hidden sm:inline">
+            {signedIn ? "Search companies" : "Sign in to search"}
+          </span>
           <kbd className="ml-2 hidden rounded border bg-muted px-1.5 text-xs sm:inline">
             ⌘K
           </kbd>

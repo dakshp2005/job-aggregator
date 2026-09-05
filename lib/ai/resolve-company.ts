@@ -4,6 +4,7 @@ import type { Database, AtsType } from "@/lib/supabase/database.types";
 import { detectAts, ADAPTERS } from "@/lib/adapters/registry";
 import { politeFetch, DEFAULT_CONTEXT } from "@/lib/adapters/http";
 import { geminiJson } from "./gemini";
+import { webSearch, isAggregatorHost } from "./web-search";
 import { slugify } from "@/lib/utils";
 
 type Admin = SupabaseClient<Database>;
@@ -16,7 +17,7 @@ export interface ResolvedCompany {
   atsSlug: string | null;
   description: string | null;
   hqCountry: string | null;
-  method: "probe" | "html-link" | "ai" | "unresolved";
+  method: "probe" | "html-link" | "web-search" | "ai" | "unresolved";
   confidence: number;
 }
 
@@ -43,6 +44,41 @@ async function probe(url: string): Promise<{ ok: boolean; finalUrl: string; html
     return { ok: true, finalUrl: res.url || url, html };
   } catch {
     return { ok: false, finalUrl: url };
+  }
+}
+
+/**
+ * A 200 on a guessed ATS URL isn't proof the org exists: Ashby's job-board
+ * frontend is a client-rendered SPA that serves the same 200 shell for any
+ * slug, and SmartRecruiters/Recruitee/Personio redirect a nonexistent
+ * slug/subdomain to their generic marketing homepage (also a 200). This
+ * verifies the guess actually resolved to that specific org before we
+ * trust it.
+ */
+async function verifyGuess(
+  atsType: AtsType,
+  slug: string,
+  probed: { finalUrl: string },
+): Promise<boolean> {
+  switch (atsType) {
+    case "ashby": {
+      // The real posting-api 404s for a board that doesn't exist.
+      const api = await probe(`https://api.ashbyhq.com/posting-api/job-board/${slug}`);
+      return api.ok;
+    }
+    case "smartrecruiters":
+    case "recruitee":
+    case "personio": {
+      // A redirect to the provider's marketing site drops the slug/subdomain.
+      try {
+        const u = new URL(probed.finalUrl);
+        return u.hostname.includes(slug) || u.pathname.includes(slug);
+      } catch {
+        return false;
+      }
+    }
+    default:
+      return true;
   }
 }
 
@@ -124,7 +160,7 @@ export async function resolveCompany(admin: Admin, query: string): Promise<Resol
       };
       for (const g of guessUrls[adapter.type] ?? []) {
         const r = await probe(g);
-        if (r.ok) {
+        if (r.ok && (await verifyGuess(adapter.type, v, r))) {
           const hit = detectAts(r.finalUrl) ?? { atsType: adapter.type, atsSlug: v };
           return {
             ...base,
@@ -139,23 +175,58 @@ export async function resolveCompany(admin: Admin, query: string): Promise<Resol
     }
   }
 
-  // 2) Find the real domain, then its careers page, then any ATS it links to.
-  let domain: string | null = null;
-  let homepageHtml: string | undefined;
-  for (const v of variants) {
-    for (const tld of TLDS) {
-      const cand = `${v.replace(/-/g, "")}${tld}`;
-      const r = await probe(`https://${cand}`);
-      if (r.ok) {
-        domain = cand;
-        homepageHtml = r.html;
-        break;
+  // 2) Search the web for the company's real careers page instead of
+  // guessing — far more reliable than slug+TLD guessing for real-world names.
+  try {
+    const hits = await webSearch(`${query} careers`);
+    for (const hit of hits) {
+      let hostname: string;
+      try {
+        hostname = new URL(hit.url).hostname;
+      } catch {
+        continue;
       }
+      if (isAggregatorHost(hostname)) continue;
+
+      const r = await probe(hit.url);
+      if (!r.ok) continue;
+
+      base.careersUrl = r.finalUrl;
+      base.domain = base.domain ?? hostname.replace(/^(careers|jobs|www)\./, "");
+
+      const direct = detectAts(r.finalUrl);
+      if (direct) return { ...base, ...direct, method: "web-search", confidence: 0.7 };
+      if (r.html) {
+        const hit2 = findAtsInHtml(r.html);
+        if (hit2) return { ...base, ...hit2, method: "web-search", confidence: 0.65 };
+      }
+      base.atsType = "jsonld";
+      break;
     }
-    if (domain) break;
+  } catch {
+    // Search unavailable — fall through to guess-based discovery below.
   }
 
-  if (domain) {
+  // 2b) Web search already found a working careers page — no need to also
+  // guess domains, that would risk downgrading a good hit with a weaker one.
+  let domain: string | null = base.domain;
+  let homepageHtml: string | undefined;
+  if (!base.careersUrl) {
+    for (const v of variants) {
+      for (const tld of TLDS) {
+        const cand = `${v.replace(/-/g, "")}${tld}`;
+        const r = await probe(`https://${cand}`);
+        if (r.ok) {
+          domain = cand;
+          homepageHtml = r.html;
+          break;
+        }
+      }
+      if (domain) break;
+    }
+  }
+
+  if (domain && !base.careersUrl) {
     base.domain = domain;
     const origin = `https://${domain}`;
     const careerCandidates: string[] = [];

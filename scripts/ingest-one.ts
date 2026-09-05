@@ -37,7 +37,7 @@ async function main() {
   if (slug) {
     const { data: company, error } = await admin
       .from("companies")
-      .select("id, name, slug, ats_type, ats_slug, careers_url, tags")
+      .select("id, name, slug, ats_type, ats_slug, careers_url, tags, ai_extract_attempted_at")
       .eq("slug", slug)
       .single();
     if (error || !company) {

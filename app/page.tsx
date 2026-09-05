@@ -3,6 +3,7 @@ import { ArrowRight, GraduationCap, Sparkles, Zap } from "lucide-react";
 import { SearchCommand } from "@/components/search-command";
 import { CompanyCard } from "@/components/company-card";
 import { Badge } from "@/components/ui/badge";
+import { createClient } from "@/lib/supabase/server";
 import {
   getPlatformStats,
   getTrendingCompanies,
@@ -14,7 +15,17 @@ import { timeAgo } from "@/lib/utils";
 export const revalidate = 300;
 
 export default async function HomePage() {
-  const [stats, trending, recent, earlyCareer] = await Promise.all([
+  const supabase = await createClient();
+  const [
+    {
+      data: { user },
+    },
+    stats,
+    trending,
+    recent,
+    earlyCareer,
+  ] = await Promise.all([
+    supabase.auth.getUser(),
     getPlatformStats(),
     getTrendingCompanies(8),
     getRecentlyAdded(8),
@@ -36,7 +47,7 @@ export default async function HomePage() {
         </p>
 
         <div className="mx-auto mt-8 max-w-xl">
-          <SearchCommand variant="hero" />
+          <SearchCommand variant="hero" signedIn={!!user} />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-1 text-sm text-muted-foreground">

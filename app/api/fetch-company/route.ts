@@ -28,6 +28,9 @@ export async function POST(req: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Sign in to fetch a company." }, { status: 401 });
+  }
 
   const admin = createAdminClient();
 

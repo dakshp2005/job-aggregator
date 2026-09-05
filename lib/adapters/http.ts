@@ -7,7 +7,7 @@ export const DEFAULT_CONTEXT: AdapterContext = {
   minDelayMs: 1100,
 };
 
-function userAgent(ctx: AdapterContext) {
+export function userAgent(ctx: AdapterContext) {
   return `OpenRolesBot/1.0 (+${ctx.contactUrl})`;
 }
 
