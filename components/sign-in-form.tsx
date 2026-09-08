@@ -2,87 +2,102 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Github, Mail, Loader2, CheckCircle2, Lock } from "lucide-react";
+import { Github, Loader2, Lock, Mail, CheckCircle2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 
-const RESEND_COOLDOWN_MS = 60_000;
+type View = "password" | "signup";
+type OAuthProvider = "github" | "google";
+type Loading = "password" | "signup" | "magic" | OAuthProvider | null;
 
-function readSent(key: string): { email: string; sentAt: number } | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeSent(key: string, email: string) {
-  try {
-    window.sessionStorage.setItem(key, JSON.stringify({ email, sentAt: Date.now() }));
-  } catch {
-    /* ignore storage failures (private browsing, etc.) */
-  }
-}
-
-/** Countdown text for a resend cooldown, or a clickable resend link once it's over. */
-function ResendHint({
-  sentAt,
-  loading,
-  onResend,
-}: {
-  sentAt: number;
-  loading: boolean;
-  onResend: () => void;
-}) {
-  const [now, setNow] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const remaining = Math.max(0, RESEND_COOLDOWN_MS - (now - sentAt));
+/** Brand mark for the Google button (lucide has no Google icon). */
+function GoogleIcon({ className }: { className?: string }) {
   return (
-    <p className="text-center text-xs text-muted-foreground">
-      Didn&apos;t get it?{" "}
-      {remaining > 0 ? (
-        <span>Resend in {Math.ceil(remaining / 1000)}s</span>
-      ) : (
-        <button
-          type="button"
-          className="font-medium text-foreground underline underline-offset-2"
-          onClick={onResend}
-          disabled={loading}
-        >
-          {loading ? "Sending…" : "Resend"}
-        </button>
-      )}
-    </p>
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38Z"
+      />
+    </svg>
   );
 }
 
-type View = "password" | "signup" | "magic";
+/** GitHub + Google — shared by the sign-in and sign-up views. */
+function OAuthButtons({
+  loading,
+  onClick,
+}: {
+  loading: Loading;
+  onClick: (provider: OAuthProvider) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Button
+        variant="outline"
+        className="w-full gap-2"
+        onClick={() => onClick("github")}
+        disabled={loading !== null}
+      >
+        {loading === "github" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Github className="h-4 w-4" />
+        )}
+        Continue with GitHub
+      </Button>
+      <Button
+        variant="outline"
+        className="w-full gap-2"
+        onClick={() => onClick("google")}
+        disabled={loading !== null}
+      >
+        {loading === "google" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <GoogleIcon className="h-4 w-4" />
+        )}
+        Continue with Google
+      </Button>
+    </div>
+  );
+}
+
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-3">
+      <Separator className="flex-1" />
+      <span className="text-xs text-muted-foreground">or</span>
+      <Separator className="flex-1" />
+    </div>
+  );
+}
 
 export function SignInForm({ next = "/dashboard" }: { next?: string }) {
   const router = useRouter();
-  const magicStored = React.useMemo(() => readSent("openroles-magic-link"), []);
-  const signupStored = React.useMemo(() => readSent("openroles-signup"), []);
-  const resetStored = React.useMemo(() => readSent("openroles-reset"), []);
 
   const [view, setView] = React.useState<View>("password");
-  const [email, setEmail] = React.useState(magicStored?.email ?? signupStored?.email ?? "");
+  const [fullName, setFullName] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-  const [loading, setLoading] = React.useState<
-    "password" | "signup" | "github" | "magic" | "reset" | null
-  >(null);
+  const [confirmPassword, setConfirmPassword] = React.useState("");
+  const [magicLinkSent, setMagicLinkSent] = React.useState(false);
+  const [loading, setLoading] = React.useState<Loading>(null);
   const [error, setError] = React.useState<string | null>(null);
-
-  const [magicSentAt, setMagicSentAt] = React.useState(magicStored?.sentAt ?? 0);
-  const [signupSentAt, setSignupSentAt] = React.useState(signupStored?.sentAt ?? 0);
-  const [resetSentAt, setResetSentAt] = React.useState(resetStored?.sentAt ?? 0);
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
@@ -90,6 +105,13 @@ export function SignInForm({ next = "/dashboard" }: { next?: string }) {
   const goNext = () => {
     router.push(next);
     router.refresh();
+  };
+
+  const switchView = (to: View) => {
+    setView(to);
+    setPassword("");
+    setConfirmPassword("");
+    setError(null);
   };
 
   const signInWithPassword = async (e: React.FormEvent) => {
@@ -111,12 +133,20 @@ export function SignInForm({ next = "/dashboard" }: { next?: string }) {
 
   const signUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading("signup");
     setError(null);
+    if (!fullName.trim()) {
+      setError("Enter your full name.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords don't match.");
+      return;
+    }
+    setLoading("signup");
     const { data, error } = await createClient().auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: redirectTo },
+      options: { data: { full_name: fullName.trim() } },
     });
     setLoading(null);
     if (error) {
@@ -124,72 +154,40 @@ export function SignInForm({ next = "/dashboard" }: { next?: string }) {
       return;
     }
     if (data.session) {
-      // Email confirmation is off for this project — the account is live immediately.
       goNext();
       return;
     }
-    const at = Date.now();
-    setSignupSentAt(at);
-    writeSent("openroles-signup", email);
-    setView("signup"); // stay, but render() below now shows the "check inbox" panel
-  };
-
-  const resendSignupEmail = async () => {
-    setLoading("signup");
-    setError(null);
-    const { error } = await createClient().auth.resend({
-      type: "signup",
-      email,
-      options: { emailRedirectTo: redirectTo },
-    });
-    setLoading(null);
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    const at = Date.now();
-    setSignupSentAt(at);
-    writeSent("openroles-signup", email);
+    // No session means Supabase still has email confirmation switched on.
+    setError(
+      "Account created, but email confirmation is enabled in Supabase. Turn off " +
+        "“Confirm email” under Authentication → Providers → Email to sign in without a link.",
+    );
   };
 
   const sendMagicLink = async () => {
-    setLoading("magic");
     setError(null);
+    if (!email) {
+      setError("Enter your email above first.");
+      return;
+    }
+    setLoading("magic");
     const { error } = await createClient().auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: redirectTo },
+      options: { emailRedirectTo: redirectTo, shouldCreateUser: false },
     });
     setLoading(null);
     if (error) {
       setError(error.message);
       return;
     }
-    const at = Date.now();
-    setMagicSentAt(at);
-    writeSent("openroles-magic-link", email);
+    setMagicLinkSent(true);
   };
 
-  const sendResetLink = async () => {
-    setLoading("reset");
-    setError(null);
-    const { error } = await createClient().auth.resetPasswordForEmail(email, {
-      redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/auth/reset-password")}`,
-    });
-    setLoading(null);
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    const at = Date.now();
-    setResetSentAt(at);
-    writeSent("openroles-reset", email);
-  };
-
-  const github = async () => {
-    setLoading("github");
+  const oauth = async (provider: OAuthProvider) => {
+    setLoading(provider);
     setError(null);
     const { error } = await createClient().auth.signInWithOAuth({
-      provider: "github",
+      provider,
       options: { redirectTo },
     });
     if (error) {
@@ -198,37 +196,8 @@ export function SignInForm({ next = "/dashboard" }: { next?: string }) {
     }
   };
 
-  // ── "check your inbox" panels (persisted across dialog remounts) ──────────
-  if (view === "signup" && signupSentAt) {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-start gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
-          <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
-          <div>
-            <p className="font-medium">Confirm your account</p>
-            <p className="text-muted-foreground">
-              We sent a confirmation link to {email}. Open it, then come back and sign in.
-            </p>
-          </div>
-        </div>
-        <ResendHint
-          sentAt={signupSentAt}
-          loading={loading === "signup"}
-          onResend={resendSignupEmail}
-        />
-        {error && <p className="text-center text-sm text-destructive">{error}</p>}
-        <button
-          type="button"
-          className="w-full text-center text-xs text-muted-foreground underline underline-offset-2"
-          onClick={() => setView("password")}
-        >
-          Back to sign in
-        </button>
-      </div>
-    );
-  }
-
-  if (view === "magic" && magicSentAt) {
+  // ── Magic link sent ───────────────────────────────────────────────────────
+  if (magicLinkSent) {
     return (
       <div className="space-y-3">
         <div className="flex items-start gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
@@ -236,229 +205,174 @@ export function SignInForm({ next = "/dashboard" }: { next?: string }) {
           <div>
             <p className="font-medium">Check your inbox</p>
             <p className="text-muted-foreground">
-              We sent a magic link to {email}. Open it on this device.
+              We sent a magic link to {email}. Open it on this device to sign in.
             </p>
           </div>
         </div>
-        <ResendHint sentAt={magicSentAt} loading={loading === "magic"} onResend={sendMagicLink} />
-        {error && <p className="text-center text-sm text-destructive">{error}</p>}
-        <button
-          type="button"
-          className="w-full text-center text-xs text-muted-foreground underline underline-offset-2"
-          onClick={() => setView("password")}
-        >
-          Back to sign in
-        </button>
-      </div>
-    );
-  }
-
-  if (resetSentAt && view === "password") {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-start gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
-          <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
-          <div>
-            <p className="font-medium">Reset link sent</p>
-            <p className="text-muted-foreground">
-              Open the link we sent to {email} to set a new password.
-            </p>
-          </div>
-        </div>
-        <ResendHint sentAt={resetSentAt} loading={loading === "reset"} onResend={sendResetLink} />
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
         <button
           type="button"
           className="w-full text-center text-xs text-muted-foreground underline underline-offset-2"
           onClick={() => {
-            setResetSentAt(0);
-            try {
-              window.sessionStorage.removeItem("openroles-reset");
-            } catch {
-              /* ignore */
-            }
-          }}
-        >
-          Back to sign in
-        </button>
-      </div>
-    );
-  }
-
-  // ── Sign up ────────────────────────────────────────────────────────────────
-  if (view === "signup") {
-    return (
-      <form onSubmit={signUp} className="space-y-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="signup-email">Email</Label>
-          <Input
-            id="signup-email"
-            type="email"
-            required
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="signup-password">Password</Label>
-          <Input
-            id="signup-password"
-            type="password"
-            required
-            minLength={6}
-            placeholder="At least 6 characters"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
-        <Button type="submit" className="w-full gap-2" disabled={loading !== null}>
-          {loading === "signup" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-          Create account
-        </Button>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <p className="text-center text-xs text-muted-foreground">
-          Already have an account?{" "}
-          <button
-            type="button"
-            className="font-medium text-foreground underline underline-offset-2"
-            onClick={() => {
-              setView("password");
-              setError(null);
-            }}
-          >
-            Sign in
-          </button>
-        </p>
-      </form>
-    );
-  }
-
-  // ── Magic link (alternative to password) ───────────────────────────────────
-  if (view === "magic") {
-    return (
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          sendMagicLink();
-        }}
-        className="space-y-4"
-      >
-        <div className="space-y-1.5">
-          <Label htmlFor="magic-email">Email</Label>
-          <Input
-            id="magic-email"
-            type="email"
-            required
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </div>
-        <Button type="submit" className="w-full gap-2" disabled={loading !== null}>
-          {loading === "magic" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-          Send magic link
-        </Button>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <button
-          type="button"
-          className="w-full text-center text-xs text-muted-foreground underline underline-offset-2"
-          onClick={() => {
-            setView("password");
+            setMagicLinkSent(false);
             setError(null);
           }}
         >
-          Use a password instead
+          Back to sign in
         </button>
-      </form>
+      </div>
     );
   }
 
-  // ── Password sign-in (default) ──────────────────────────────────────────────
+  // ── Create account ────────────────────────────────────────────────────────
+  if (view === "signup") {
+    return (
+      <div className="space-y-4">
+        <OAuthButtons loading={loading} onClick={oauth} />
+        <OrDivider />
+        <form onSubmit={signUp} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="signup-name">Full name</Label>
+            <Input
+              id="signup-name"
+              type="text"
+              required
+              autoComplete="name"
+              placeholder="Ada Lovelace"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="signup-email">Email</Label>
+            <Input
+              id="signup-email"
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="signup-password">Password</Label>
+            <Input
+              id="signup-password"
+              type="password"
+              required
+              minLength={6}
+              autoComplete="new-password"
+              placeholder="At least 6 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="signup-confirm-password">Confirm password</Label>
+            <Input
+              id="signup-confirm-password"
+              type="password"
+              required
+              minLength={6}
+              autoComplete="new-password"
+              placeholder="Re-enter your password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          </div>
+          <Button type="submit" className="w-full gap-2" disabled={loading !== null}>
+            {loading === "signup" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Lock className="h-4 w-4" />
+            )}
+            Create account
+          </Button>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <p className="text-center text-xs text-muted-foreground">
+            Already have an account?{" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline underline-offset-2"
+              onClick={() => switchView("password")}
+            >
+              Sign in
+            </button>
+          </p>
+        </form>
+      </div>
+    );
+  }
+
+  // ── Sign in ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      <Button variant="outline" className="w-full gap-2" onClick={github} disabled={loading !== null}>
-        {loading === "github" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Github className="h-4 w-4" />}
-        Continue with GitHub
-      </Button>
-
-      <div className="flex items-center gap-3">
-        <Separator className="flex-1" />
-        <span className="text-xs text-muted-foreground">or</span>
-        <Separator className="flex-1" />
-      </div>
+      <OAuthButtons loading={loading} onClick={oauth} />
+      <OrDivider />
 
       <form onSubmit={signInWithPassword} className="space-y-3">
         <div className="space-y-1.5">
-          <Label htmlFor="password-email">Email</Label>
+          <Label htmlFor="signin-email">Email</Label>
           <Input
-            id="password-email"
+            id="signin-email"
             type="email"
             required
+            autoComplete="email"
             placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="password">Password</Label>
-            <button
-              type="button"
-              className="text-xs text-muted-foreground underline underline-offset-2"
-              onClick={() => {
-                setError(null);
-                if (!email) {
-                  setError("Enter your email above first.");
-                  return;
-                }
-                sendResetLink();
-              }}
-              disabled={loading !== null}
-            >
-              Forgot password?
-            </button>
-          </div>
+          <Label htmlFor="signin-password">Password</Label>
           <Input
-            id="password"
+            id="signin-password"
             type="password"
             required
+            autoComplete="current-password"
             placeholder="Your password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
         <Button type="submit" className="w-full gap-2" disabled={loading !== null}>
-          {loading === "password" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+          {loading === "password" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Lock className="h-4 w-4" />
+          )}
           Sign in
         </Button>
       </form>
 
+      <Button
+        type="button"
+        variant="ghost"
+        className="w-full gap-2"
+        onClick={sendMagicLink}
+        disabled={loading !== null}
+      >
+        {loading === "magic" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Mail className="h-4 w-4" />
+        )}
+        Email me a magic link
+      </Button>
+
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <button
-          type="button"
-          className="underline underline-offset-2"
-          onClick={() => {
-            setView("magic");
-            setError(null);
-          }}
-        >
-          Use a magic link instead
-        </button>
+      <p className="text-center text-xs text-muted-foreground">
+        New here?{" "}
         <button
           type="button"
           className="font-medium text-foreground underline underline-offset-2"
-          onClick={() => {
-            setView("signup");
-            setPassword("");
-            setError(null);
-          }}
+          onClick={() => switchView("signup")}
         >
           Create an account
         </button>
-      </div>
+      </p>
     </div>
   );
 }

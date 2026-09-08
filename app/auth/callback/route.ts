@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-/** OAuth / magic-link redirect target. Exchanges the code for a session. */
+/** OAuth / email-confirmation redirect target. Exchanges the code for a session. */
 export async function GET(req: NextRequest) {
   const { searchParams, origin } = req.nextUrl;
   const code = searchParams.get("code");

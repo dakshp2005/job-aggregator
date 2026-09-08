@@ -30,13 +30,6 @@ export function UserMenu({ email }: { email: string | null }) {
 
   const signOut = async () => {
     await createClient().auth.signOut();
-    try {
-      window.sessionStorage.removeItem("openroles-magic-link");
-      window.sessionStorage.removeItem("openroles-signup");
-      window.sessionStorage.removeItem("openroles-reset");
-    } catch {
-      /* ignore storage failures */
-    }
     router.refresh();
     router.push("/");
   };
