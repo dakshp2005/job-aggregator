@@ -1,9 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LayoutDashboard, KanbanSquare, UserRound, LogOut, LogIn } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,9 +12,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useAuth } from "@/components/auth-provider";
 
-export function UserMenu({ email }: { email: string | null }) {
-  const router = useRouter();
+export function UserMenu() {
+  const { user, signOut } = useAuth();
+  const email = user?.email ?? null;
 
   if (!email) {
     return (
@@ -27,12 +27,6 @@ export function UserMenu({ email }: { email: string | null }) {
       </Button>
     );
   }
-
-  const signOut = async () => {
-    await createClient().auth.signOut();
-    router.refresh();
-    router.push("/");
-  };
 
   return (
     <DropdownMenu>
@@ -64,7 +58,7 @@ export function UserMenu({ email }: { email: string | null }) {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={signOut}>
+        <DropdownMenuItem onClick={() => void signOut()}>
           <LogOut className="h-4 w-4" /> Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>
