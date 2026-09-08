@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 import { Navbar } from "@/components/navbar";
 import { Toaster } from "@/components/ui/sonner";
+import { createClient } from "@/lib/supabase/server";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -26,13 +27,18 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} font-sans antialiased`}>
-        <Providers>
+        <Providers initialUser={user}>
           <Navbar />
           <main className="min-h-[calc(100vh-3.5rem)]">{children}</main>
           <footer className="border-t py-8">

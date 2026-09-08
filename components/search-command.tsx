@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Search, Loader2, Building2, Sparkles } from "lucide-react";
+import { Search, Loader2, Sparkles } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -12,6 +12,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
+import { CompanyLogo } from "@/components/company-logo";
 import { cn } from "@/lib/utils";
 
 interface Hit {
@@ -163,16 +164,8 @@ export function SearchCommand({
                   onSelect={() => go(`/company/${h.slug}`)}
                   className="gap-3"
                 >
-                  {h.domain ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={`https://www.google.com/s2/favicons?domain=${h.domain}&sz=64`}
-                      alt=""
-                      className="h-5 w-5 rounded"
-                    />
-                  ) : (
-                    <Building2 className="h-5 w-5 text-muted-foreground" />
-                  )}
+                  <CompanyLogo domain={h.domain} name={h.name} size={20} />
+
                   <span className="flex-1 truncate">{h.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {h.open_jobs_count} open

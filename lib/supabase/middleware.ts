@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "./database.types";
 
-const PROTECTED = ["/dashboard", "/tracker", "/profile", "/search"];
+const PROTECTED = ["/dashboard", "/tracker", "/profile", "/search", "/company"];
 
 /** Refreshes the Supabase session on every request and guards private routes. */
 export async function updateSession(request: NextRequest) {
